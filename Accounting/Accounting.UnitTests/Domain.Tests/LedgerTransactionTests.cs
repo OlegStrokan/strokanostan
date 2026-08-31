@@ -95,4 +95,94 @@ public class LedgerTransactionTests
         Assert.Throws<ArgumentOutOfRangeException>(
             () => LedgerTransaction.ForRefund(Guid.NewGuid(), "REF-0", new Money(0m, "EUR"), DateTime.UtcNow));
     }
+
+    [Fact]
+    public void ForAuthorization_ShouldHoldWithoutTouchingRevenue()
+    {
+        var tx = LedgerTransaction.ForAuthorization(
+            Guid.NewGuid(), Guid.NewGuid(), "pay-1", new Money(100m, "EUR"), DateTime.UtcNow);
+
+        Assert.Equal(TransactionRefType.Authorize, tx.RefType);
+        Assert.Equal("authorize:pay-1", tx.TransactionRef);
+
+        var debit = Assert.Single(tx.Entries.Where(e => e.Direction == EntryDirection.Debit));
+        var credit = Assert.Single(tx.Entries.Where(e => e.Direction == EntryDirection.Credit));
+
+        Assert.Equal(LedgerAccount.CustomerAuthorized, debit.Account);
+        Assert.Equal(LedgerAccount.AuthorizationHold, credit.Account);
+    }
+
+    [Fact]
+    public void ForAuthorizationVoid_ShouldMirrorTheAuthorization()
+    {
+        var tx = LedgerTransaction.ForAuthorizationVoid(
+            Guid.NewGuid(), Guid.NewGuid(), "pay-1", new Money(100m, "EUR"), DateTime.UtcNow);
+
+        Assert.Equal("void:pay-1", tx.TransactionRef);
+
+        var debit = Assert.Single(tx.Entries.Where(e => e.Direction == EntryDirection.Debit));
+        var credit = Assert.Single(tx.Entries.Where(e => e.Direction == EntryDirection.Credit));
+
+        Assert.Equal(LedgerAccount.AuthorizationHold, debit.Account);
+        Assert.Equal(LedgerAccount.CustomerAuthorized, credit.Account);
+    }
+
+    [Fact]
+    public void ForCapture_ShouldPostCashAgainstRevenue_WhenNoFeeOrTax()
+    {
+        var tx = LedgerTransaction.ForCapture(
+            Guid.NewGuid(), Guid.NewGuid(), "pay-1", new Money(100m, "EUR"), fee: 0m, tax: 0m, DateTime.UtcNow);
+
+        Assert.Equal(TransactionRefType.Capture, tx.RefType);
+        Assert.Equal("capture:pay-1", tx.TransactionRef);
+        Assert.Equal(2, tx.Entries.Count);
+
+        var debit = Assert.Single(tx.Entries.Where(e => e.Direction == EntryDirection.Debit));
+        var credit = Assert.Single(tx.Entries.Where(e => e.Direction == EntryDirection.Credit));
+
+        Assert.Equal(LedgerAccount.CustomerCaptured, debit.Account);
+        Assert.Equal(LedgerAccount.MerchantRevenue, credit.Account);
+        Assert.Equal(100m, debit.Amount);
+    }
+
+    [Fact]
+    public void ForCapture_ShouldSplitFeeAndTax_AndStayBalanced()
+    {
+        var tx = LedgerTransaction.ForCapture(
+            Guid.NewGuid(), Guid.NewGuid(), "pay-1", new Money(100m, "EUR"), fee: 3m, tax: 20m, DateTime.UtcNow);
+
+        Assert.Equal(4, tx.Entries.Count);
+
+        var debits = tx.Entries.Where(e => e.Direction == EntryDirection.Debit).ToList();
+        var credits = tx.Entries.Where(e => e.Direction == EntryDirection.Credit).ToList();
+
+        // Cash settles net of the provider fee; the fee itself is an expense.
+        Assert.Equal(97m, debits.Single(e => e.Account == LedgerAccount.CustomerCaptured).Amount);
+        Assert.Equal(3m, debits.Single(e => e.Account == LedgerAccount.GatewayFees).Amount);
+
+        // Revenue is net of tax; the tax portion is owed onward.
+        Assert.Equal(80m, credits.Single(e => e.Account == LedgerAccount.MerchantRevenue).Amount);
+        Assert.Equal(20m, credits.Single(e => e.Account == LedgerAccount.TaxPayable).Amount);
+
+        Assert.Equal(debits.Sum(e => e.Amount), credits.Sum(e => e.Amount));
+    }
+
+    [Fact]
+    public void ForCapture_ShouldReject_WhenFeeExceedsTheCapturedAmount()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => LedgerTransaction.ForCapture(
+            Guid.NewGuid(), Guid.NewGuid(), "pay-1", new Money(10m, "EUR"), fee: 11m, tax: 0m, DateTime.UtcNow));
+    }
+
+    [Fact]
+    public void PaymentPostings_ShouldKeyTransactionRefOnLegAndPayment()
+    {
+        var authorize = LedgerTransaction.ForAuthorization(
+            null, null, "pay-9", new Money(10m, "USD"), DateTime.UtcNow);
+        var capture = LedgerTransaction.ForCapture(
+            null, null, "pay-9", new Money(10m, "USD"), 0m, 0m, DateTime.UtcNow);
+
+        // Same payment, different legs: one must never collapse into the other.
+        Assert.NotEqual(authorize.TransactionRef, capture.TransactionRef);
+    }
 }
