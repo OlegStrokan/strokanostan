@@ -14,50 +14,6 @@ public class AccountingGateway(
     private Metadata BuildHeaders() =>
         new() { { "x-internal-api-key", configuration["InternalServices:AccountingApiKey"] ?? string.Empty } };
 
-    public async Task<string> RecordRefundAsync(
-        Guid orderId,
-        string refundId,
-        decimal amount,
-        string currency,
-        string reason,
-        CancellationToken cancellationToken)
-    {
-
-
-
-        var request = new RecordRefundRequest
-        {
-            OrderId = orderId.ToString(),
-            RefundId = refundId,
-            Amount = amount.ToDecimalValue(),
-            Currency = currency,
-            Reason = reason
-        };
-
-        try
-        {
-            var response = await client.RecordRefundAsync(request, BuildHeaders(), cancellationToken: cancellationToken);
-
-            if (!response.Success)
-                throw new InvalidOperationException(
-                    $"Recording refund failed. OrderId={orderId}, RefundId={refundId}, Error={response.ErrorMessage}");
-
-            logger.LogInformation(
-                "Refund recorded in accounting. OrderId={OrderId}, RefundId={RefundId}, TransactionId={TransactionId}",
-                orderId,
-                refundId,
-                response.TransactionId);
-
-            return response.TransactionId;
-        } 
-        catch (RpcException ex) when (ex.StatusCode == StatusCode.InvalidArgument)
-        {
-            throw new InvalidOperationException(
-                $"Invalid refund data for OrderId={orderId}. Detail={ex.Status.Detail}");
-        }
-        
-    }
-
     public async Task<string> ReverseRevenueAsync(
         Guid orderId,
         Guid returnRequestId,

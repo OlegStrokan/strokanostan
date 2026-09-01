@@ -18,7 +18,7 @@ public sealed class UpdateAccountingRecordsStep(
     {
         try
         {
-            if (string.IsNullOrEmpty(context.RefundId))
+           if (string.IsNullOrEmpty(context.RefundId))
             {
                 return new Fail("RefundId is required but was not found in context");
             }
@@ -29,29 +29,11 @@ public sealed class UpdateAccountingRecordsStep(
             }
 
             logger.LogInformation(
-                "Updating accounting records for order {OrderId}, refund {RefundId}",
+                "Reversing revenue for order {OrderId}, return request {ReturnRequestId}",
                 data.CorrelationId,
-                context.RefundId);
+                data.ReturnRequestId);
 
-            /* @todo:
-             * as soon as douchebag from accounting team update public api
-             * we will use only one external call to prevent second of waiting
-            */
-            
-            // step 1: record the refund transaction
-            var journalEntryId = await accountingGateway.RecordRefundAsync(
-                orderId: data.CorrelationId,
-                refundId: context.RefundId,
-                amount: data.RefundAmount,
-                currency: data.Currency,
-                reason: data.ReturnReason,
-                cancellationToken);
-
-            logger.LogInformation(
-                "Refund recorded in accounting. Journal Entry: {JournalEntryId}",
-                journalEntryId);
-
-            // step 2: reverse the revenue
+            // Only the return-specific leg belongs here: Payment cannot know goods came back.
             var reversalId = await accountingGateway.ReverseRevenueAsync(
                 orderId: data.CorrelationId,
                 returnRequestId: data.ReturnRequestId,
@@ -59,7 +41,6 @@ public sealed class UpdateAccountingRecordsStep(
                 currency: data.Currency,
                 returnedItems: data.ReturnedItems,
                 cancellationToken);
-
 
             context.RevenueReversalId = reversalId;
 
@@ -69,7 +50,6 @@ public sealed class UpdateAccountingRecordsStep(
 
             return new Completed(new Dictionary<string, object>
             {
-                ["JournalEntryId"] = journalEntryId,
                 ["RevenueReversalId"] = reversalId,
                 ["Amount"] = data.RefundAmount
             });

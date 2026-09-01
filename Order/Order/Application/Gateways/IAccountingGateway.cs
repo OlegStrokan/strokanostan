@@ -4,14 +4,6 @@ namespace Application.Gateways;
 
 public interface IAccountingGateway
 {
-    Task<string> RecordRefundAsync(
-        Guid orderId,
-        string refundId,
-        decimal amount,
-        string currency,
-        string reason,
-        CancellationToken cancellationToken);
-
     Task<string> ReverseRevenueAsync(
         Guid orderId,
         Guid returnRequestId,
