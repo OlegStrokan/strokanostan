@@ -21,6 +21,7 @@ flowchart TD
         Payment["Payment"]
         Inventory["Inventory"]
         Search["Search"]
+        Accounting["Accounting<br/>double-entry ledger"]
     end
 
     subgraph AISearch["AI Search"]
@@ -42,6 +43,7 @@ flowchart TD
     OrderDB[("Postgres :5437 / :5438")]
     PaymentDB[("Postgres :5436")]
     InventoryDB[("Postgres :5434")]
+    AccountingDB[("Postgres :5441")]
 
     ProductAdmin -- "gRPC · direct, bypasses Gateway" --> Product
 
@@ -59,6 +61,10 @@ flowchart TD
     Order --> OrderDB
     Payment --> PaymentDB
     Inventory --> InventoryDB
+    Accounting --> AccountingDB
+
+    Payment -- "Kafka · payment.money-events" --> Accounting
+    Order -- "gRPC · revenue reversal" --> Accounting
 
     Search -- gRPC --> AiSearch
     AiSearch --> Ollama
@@ -77,7 +83,7 @@ flowchart TD
     classDef ai fill:#ede9fe,stroke:#6d28d9,color:#4c1d95;
     classDef partner fill:#dcfce7,stroke:#15803d,color:#14532d;
     class ProductAdmin,Gateway entry;
-    class AuthDB,UserDB,ProductDB,OrderDB,PaymentDB,InventoryDB db;
+    class AuthDB,UserDB,ProductDB,OrderDB,PaymentDB,InventoryDB,AccountingDB db;
     class AiSearch,Ollama,Qdrant,Elastic ai;
     class Stripe,Dpd,Ppl partner;
 ```
@@ -164,11 +170,26 @@ Async email delivery via Kafka consumer (no REST/gRPC endpoints). Implements ide
 - **DB**: Postgres (idempotency store)
 - **SMTP**: MailHog in dev (:1025)
 
+### Accounting (`/Accounting`)
+Append-only **double-entry ledger** — the single source of monetary truth. Payment writes a money-event into the same transaction as the money mutation; Accounting consumes that stream and posts balanced entries.
+
+**Key capabilities:**
+- **Currency-native primitive ledger**: every transaction satisfies `Σdebits = Σcredits` per currency, enforced in the aggregate. Postings are append-only — corrections are new reversing transactions, never edits.
+- **Two-layer idempotency**: `processed_events.event_id` (Kafka delivery) + unique `ledger_transactions.transaction_ref` (business key). The posting and the processed marker commit in one `SaveChangesAsync`.
+- **Reconciliation worker**: checks per-currency balance, per-transaction balance, and per-order over-refund — the last catches the double-refund class that per-entity workers structurally cannot, because each refund is individually balanced.
+- **FX reporting layer**: derived, rebuildable `ledger_reporting_entries` converted at the rate effective when the transaction occurred; rounding residue posts to `fx_gain_loss`.
+- **Own incident reporter**: ledger drift pages a dedicated finance channel, never Order's.
+
+- **DB**: Postgres (:5441)
+- **Consumes**: Kafka topic `payment.money-events`
+- **gRPC**: `AccountingService` (Order: ReverseRevenue, CancelReversal), `AdminAccountingService` (OpsConsole: trial balance, money trail, ledger health, adjusting entry)
+- **Auth**: per-service `x-internal-api-key` — Order and OpsConsole hold different keys, so the console cannot reach the money-posting API
+
 ### Ops Console (`/OpsConsole`)
-Internal-only admin dashboard for operators: saga monitoring, dead-letter triage, and recovery actions (force-compensate, retry compensation, requeue) across Order, Payment, and Inventory. Never routed through the Gateway. Two parts: a .NET Minimal API backend (gRPC client to the three admin services) and a Next.js frontend operators actually open.
+Internal-only admin dashboard for operators: saga monitoring, dead-letter triage, ledger views, and recovery actions (force-compensate, retry compensation, requeue, post adjusting entry) across Order, Payment, Inventory, and Accounting. Never routed through the Gateway. Two parts: a .NET Minimal API backend (gRPC client to the four admin services) and a Next.js frontend operators actually open.
 
 - **DB**: none — stateless proxy
-- **Dependencies**: Order (`AdminOpsService`), Payment (`AdminPaymentService`), Inventory (`AdminInventoryService`), Auth/Gateway (operator JWT + login)
+- **Dependencies**: Order (`AdminOpsService`), Payment (`AdminPaymentService`), Inventory (`AdminInventoryService`), Accounting (`AdminAccountingService`), Auth/Gateway (operator JWT + login)
 
 ---
 
@@ -263,6 +284,8 @@ The Order return saga registers a delivery webhook; carriers call back into the 
 | **Inbox Pattern** | Order (read models) | Idempotent event consumption for eventual consistency |
 | **Serializable Isolation** | Inventory | Database-level transactional guarantees for stock reservations |
 | **Dual-Path Finalization** | Payment | Synchronous capture + async webhook/reconciliation fallback |
+| **Double-Entry Ledger** | Accounting | Append-only money truth; `Σdebits = Σcredits` per currency; corrections are reversing entries, never edits |
+| **Aggregate Reconciliation** | Accounting | Compares totals rather than converging single entities — catches over-refunds that are individually well-formed |
 | **RRF Hybrid Search** | AiSearchService | Combines vector similarity + keyword relevance via Reciprocal Rank Fusion |
 | **Kafka Retry + Partition Pause** | Catalog | Two-buffer resilience: Kafka backlog for systemic outages, retry storage for poison messages |
 
@@ -280,9 +303,12 @@ Gateway ──gRPC──→ Auth ──gRPC──→ User
                   │                                                       Qdrant
                   ├──gRPC──→ Order ──gRPC──→ Payment (+ Stripe)
                   │              │──gRPC──→ Inventory
+                  │              │──gRPC──→ Accounting (revenue reversal)
                   │              │──Kafka──→ Email ──SMTP──→ MailHog
                   │              │──HTTP──→ DPD / PPL carriers (shipping + returns)
                   │              └──Redis (saga locks)
+                  │
+                  │         Payment ──Kafka (payment.money-events)──→ Accounting (double-entry ledger)
                   │
                   └──gRPC──→ Search ──gRPC──→ AiSearchService
                                                  ├──→ Ollama (LLM)
@@ -315,6 +341,7 @@ cd Inventory && docker compose up -d && cd ..
 cd Payment && docker compose up -d && cd ..
 cd Order && docker compose up -d && cd ..
 cd Email && docker compose up -d && cd ..
+cd Accounting && docker compose up -d && cd ..
 ```
 
 ### 3. Run services
@@ -364,6 +391,7 @@ GitHub Actions pipeline (`.github/workflows/`) triggers on changes per service:
 | Order      | 5437         | 5438        | order_service      |
 | Catalog    | 5439         | —           | catalog_service    |
 | Email      | 5440         | —           | email_service      |
+| Accounting | 5441         | —           | accounting_db      |
 
 ---
 
@@ -386,6 +414,7 @@ dotnet test --settings ../../tests.runsettings
 ```
 free-ebay/
 ├── .github/workflows/       # CI/CD pipelines
+├── Accounting/               # Double-entry ledger (gRPC + Kafka consumer)
 ├── AI/                       # Python AI services
 │   ├── AiSearchService/      #   Hybrid semantic+keyword search (gRPC)
 │   ├── EmbeddingService/     #   Ollama embedding wrapper (REST)

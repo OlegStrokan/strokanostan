@@ -1,9 +1,14 @@
 # Build outputs
 **/bin/
 **/obj/
-
+build
 # Python
 **/__pycache__/
+**/.venv/
+**/.pytest_cache/
+
+# Node
+**/node_modules/
 
 # User-specific files
 *.user
@@ -40,3 +45,14 @@ Order.E2ETests/.idea
 # Local secrets for Telegram integration tests
 Order/Order.IntegrationTests/appsettings.telegram.integration.local.json
 Order/Order.IntegrationTests/appsettings.telegram.integration.json
+
+# Rendered k8s secrets — produced by scripts/generate-k8s-secrets.sh, never committed.
+# k8s/secrets.template.yaml (placeholders only) is the committed source of truth.
+k8s/*.generated.yaml
+k8s/secrets.yaml
+
+# Key material must never reach git
+*.pem
+*.key
+*.p12
+*.pfx

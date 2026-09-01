@@ -25,7 +25,7 @@ flowchart LR
     OC -. verify with PUBLIC key .-> PUB
     subgraph internal[Internal — gRPC]
         GW -->|no secret · network trust| SV[Order / Product / Inventory / …]
-        OC -->|x-internal-api-key| ADM[Order / Payment / Inventory admin gRPC]
+        OC -->|x-internal-api-key| ADM[Order / Payment / Inventory / Accounting admin gRPC]
         AU -->|x-internal-api-key| US[User.GetUserByEmail / VerifyCredentials]
     end
 ```
@@ -70,6 +70,8 @@ identity** before a JWT exists. Most calls don't.
 Auth → User.GetUserByEmail                    ✅ needs secret (called before any JWT exists)
 Auth → User.VerifyCredentials                 ✅ same reason
 OpsConsole → Order/Payment/Inventory admin    ✅ x-internal-api-key (privileged mutations)
+OpsConsole → Accounting admin                 ✅ x-internal-api-key (ledger reads + adjusting entry)
+Order → Accounting.ReverseRevenue             ✅ x-internal-api-key (posts to the money ledger)
 
 Gateway → Order.StartB2BOrder                 ❌ no secret (Gateway already validated the user JWT)
 Gateway → Product.CreateProduct               ❌ no secret
@@ -87,7 +89,14 @@ Used on the privileged hops:
 | Hop | Config key | Fail mode |
 |---|---|---|
 | OpsConsole → Order/Payment/Inventory admin gRPC | `InternalServices:OpsConsoleApiKey` | **fail-closed** (rejects if unset) |
+| OpsConsole → Accounting `AdminAccountingService` | `InternalServices:OpsConsoleApiKey` | **fail-closed** |
+| Order → Accounting `AccountingService` | `InternalServices:AccountingApiKey` | **fail-closed** |
 | Auth → User (pre-JWT bootstrap) | internal API key on the User gateway | — |
+
+**Accounting is the one service that checks two different keys.** Its `ApiKeyAuthInterceptor` picks
+the expected key from the gRPC method name: `AdminAccountingService` accepts the OpsConsole key,
+while the money-posting `AccountingService` requires the Accounting key. One shared key would mean an
+operator console credential could call `ReverseRevenue` — so `accounting-service-secret` carries both.
 
 - .NET maps `__` → `:`, so `InternalServices__OpsConsoleApiKey` → `configuration["InternalServices:OpsConsoleApiKey"]`.
 - The OpsConsole key must match on **both** sides (`ops-console-service-secret` and each of

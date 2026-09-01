@@ -22,6 +22,9 @@ saga based transaction with sprinkle of outbox transactions with stop/resume sag
 ### payment service:
 kinda complex. use stripe api, handle dual path finalization: sync (stripe return response), async (webhook push + reconciliation pull for pending/require-shit payments). something like 'effectively-once' semantic: at-least-once delivery + idempotency + db constraints + outbox + reconciliation
 
+### accounting service:
+double-entry ledger. the thing that actually knows how much money exists. before this, "did we refund this guy" = read payment rows + saga context + callbacks and pray
+
 ### product service: 
 internal kafka cqrs service. used by order (kafka)
 

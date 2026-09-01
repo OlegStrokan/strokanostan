@@ -6,7 +6,15 @@ This document explains how the three services cooperate to take money for an ord
 - **Payment service** — the payment domain (idempotency, state machine, outbox, reconciliation). It is **provider-agnostic**.
 - **Fintech-sandbox** — a standalone Go service that **imitates a Stripe-level card processor** for testing, without moving real money.
 
+A fourth service sits downstream and is the **system of record for money that actually moved**:
+
+- **Accounting service** — an append-only **double-entry ledger**. Payment writes a money-event in the same transaction as the money mutation; Accounting consumes that stream and posts balanced entries. Nothing in the money path blocks on it. See [Accounting/README.md](../Accounting/README.md).
+
 The golden rule of the design: **authorize early (reserve funds), capture late (move money), void on failure (free), refund only what was captured.**
+
+> **Where to look for the truth.** "Did this order get refunded?" is a ledger question, not a
+> reconstruction across Payment rows, saga context and callbacks. Payment owns *state* (this intent
+> is `Succeeded`); Accounting owns *money* (this much moved, on these accounts, at this time).
 
 ---
 
@@ -19,6 +27,7 @@ The golden rule of the design: **authorize early (reserve funds), capture late (
 | **Payment service** | C#, DDD + outbox | Payment aggregate, idempotency, state machine, webhooks, reconciliation | gRPC server; HTTP → provider; Kafka → Order |
 | **Provider abstraction** | `IStripePaymentProvider` | One interface, 3 implementations | — |
 | **Fintech-sandbox** | Go, in-memory | Stripe-shaped REST processor + signed webhooks | REST server; webhook → Payment |
+| **Accounting service** | C#, append-only ledger | Double-entry money truth, reconciliation, FX reporting | consumes Kafka from Payment; gRPC server for Order + OpsConsole |
 
 The Payment service picks its provider at startup via `Stripe:ProviderType`:
 
@@ -48,8 +57,18 @@ flowchart TB
     PROV[IStripePaymentProvider<br/>= MockFintech HttpClient]
     WH[/api/v1/webhooks/stripe/]
     OUTBOX[(Outbox:<br/>OutboundOrderCallback)]
+    MONEYBOX[(Outbox:<br/>OutboundMoneyEvent)]
     DELIV[Callback delivery worker]
+    MDELIV[Money event delivery worker]
     RECON[Reconciliation worker]
+  end
+
+  subgraph AccountingSvc[Accounting Service]
+    CONS[Money event consumer<br/>idempotent on event_id]
+    LEDGER[(Append-only ledger<br/>debits = credits)]
+    LRECON[ReconcileLedgerWorker]
+    CONS --> LEDGER
+    LRECON -.checks.-> LEDGER
   end
 
   subgraph Sandbox[Fintech-Sandbox Go]
@@ -67,6 +86,7 @@ flowchart TB
   WH --> OUTBOX
   RECON -->|poll status| PROV
   OUTBOX --> DELIV -->|Kafka event| KCON --> SAGA
+  GRPC --> MONEYBOX --> MDELIV -->|Kafka payment.money-events| CONS
 ```
 
 ---
@@ -81,6 +101,7 @@ flowchart TB
 | Payment → Fintech-sandbox | **sync** | REST + `Authorization: Bearer` | Provider call returns the intent/capture result |
 | Fintech-sandbox → Payment | **async** | HMAC-signed webhook POST → `/api/v1/webhooks/stripe` | Finalizes pending/3DS outcomes |
 | Payment → Order | **async** | Outbox → **Kafka** (`PaymentSucceeded/Failed`, `RefundSucceeded/Failed`) | Resumes a paused saga |
+| Payment → Accounting | **async** | Second outbox → **Kafka** (`payment.money-events`) | Posts the ledger entry. Written in the same `SaveChangesAsync` as the mutation, so it cannot be lost |
 | Payment ↔ Fintech-sandbox (fallback) | **sync poll** | Reconciliation worker calls `GET` status | Recovers if a webhook is lost |
 
 **Key idea:** the request path (authorize/capture) is synchronous so the saga can make decisions; the *finalization* of anything pending is asynchronous (webhook) with a synchronous **reconciliation** poll as a safety net.
@@ -331,6 +352,37 @@ sequenceDiagram
 
 ---
 
-## 13. One-paragraph summary
+## 13. The ledger — where money becomes a fact
 
-The **browser** does 3DS and creates a **hold** on the **fintech-sandbox**, then submits the order. The **Order saga** records that hold (**AuthorizePayment**, step 2) synchronously over gRPC to the **Payment service**, proceeds through fulfillment, and **captures** the money late (**CapturePayment**, step 6) just before completing the order. If anything fails before capture, the saga **voids** the hold (instant, free); after capture it **refunds**. The Payment service is provider-agnostic: against the sandbox it speaks REST and trusts **signed webhooks** for any async finalization, with a **reconciliation poll** as a fallback, and it notifies the Order saga back over **Kafka**. Uncaptured holds auto-expire after 8 days. Money is locked early, moved late, and unlocked cheaply on failure.
+Everything above is about *state transitions*. The ledger is about *money*, and it is a separate
+concern with a separate owner.
+
+Every money-moving handler in Payment (`ProcessPayment`, `CapturePayment`, `CancelAuthorization`,
+`RefundPayment`, `HandleStripeWebhook`, `ReconcilePendingPayments`) writes a money-event into a
+**second outbox** in the **same `SaveChangesAsync`** as the mutation itself. Either both land or
+neither does, so a crash can never move money without recording it.
+
+| Money event | Emitted when | Ledger posting |
+|---|---|---|
+| `PaymentAuthorizedEvent` | transition to `Authorized` | Dr `customer_authorized` / Cr `authorization_hold` |
+| `PaymentVoidedEvent` | an **`Authorized`** payment transitions to `Failed` | Dr `authorization_hold` / Cr `customer_authorized` |
+| `PaymentCapturedEvent` | transition to `Succeeded` | Dr `customer_captured` (+ `gateway_fees`) / Cr `merchant_revenue` (+ `tax_payable`) |
+| `RefundIssuedEvent` | a `Refund` transitions to `Succeeded` | Dr `refunds_payable` / Cr `customer_captured` |
+
+Three properties matter:
+
+- **The saga never waits on the ledger.** It is downstream of Payment's outbox. If Accounting is
+  down, events buffer in the topic and drain on recovery; Payment and the saga are unaffected.
+- **The refund cash leg has exactly one owner: Payment.** The return saga's
+  `UpdateAccountingRecordsStep` posts only the return-specific *revenue reversal*; Order's
+  `IAccountingGateway` deliberately has no `RecordRefund` method at all. Two writers to one fact is
+  how you get a double-booked refund.
+- **Aggregate reconciliation catches what per-entity workers cannot.** Payment's and Order's
+  reconciliation converge one stuck row at a time and never compare totals. Two refunds against one
+  capture are *each individually balanced*, so `Σdebits = Σcredits` still holds and every entity-level
+  check passes. Only comparing captured against refunded per order finds it — which is the class of
+  bug behind the $4,180 double-refund post-mortem.
+
+## 14. One-paragraph summary
+
+The **browser** does 3DS and creates a **hold** on the **fintech-sandbox**, then submits the order. The **Order saga** records that hold (**AuthorizePayment**, step 2) synchronously over gRPC to the **Payment service**, proceeds through fulfillment, and **captures** the money late (**CapturePayment**, step 6) just before completing the order. If anything fails before capture, the saga **voids** the hold (instant, free); after capture it **refunds**. The Payment service is provider-agnostic: against the sandbox it speaks REST and trusts **signed webhooks** for any async finalization, with a **reconciliation poll** as a fallback, and it notifies the Order saga back over **Kafka**. Every movement is also written as a money-event in the same transaction and posted to the **Accounting** ledger, which is the source of truth for how much money actually moved. Uncaptured holds auto-expire after 8 days. Money is locked early, moved late, and unlocked cheaply on failure.
