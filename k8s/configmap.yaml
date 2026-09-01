@@ -30,6 +30,7 @@ data:
   OrderServiceUrl: "http://order-service:8080"
   PaymentServiceUrl: "http://payment-service:8080"
   InventoryServiceUrl: "http://inventory-service:8080"
+  AccountingServiceUrl: "http://accounting-service:8080"
 
   Jwt__Authority: "http://auth-service:8080"
   Jwt__Issuer: "AuthService"
@@ -69,6 +70,20 @@ data:
   MoneyEventConsumer__ConsumerGroupId: "accounting-service-money-events"
   MoneyEventConsumer__MaxOffsetRetries: "5"
   MoneyEventConsumer__RetryDelaySeconds: "5"
+
+  LedgerReconciliation__Enabled: "true"
+  LedgerReconciliation__IntervalMinutes: "15"
+  LedgerReconciliation__StartupDelaySeconds: "60"
+  LedgerReconciliation__MaxFindings: "20"
+  LedgerReconciliation__MaxAcceptableLag: "1000"
+
+  # Single reporting currency for the derived trial balance. The primitive ledger stays
+  # currency-native; nothing here feeds back into it.
+  Reporting__Enabled: "true"
+  Reporting__ReportingCurrency: "USD"
+  Reporting__IntervalMinutes: "5"
+  Reporting__StartupDelaySeconds: "30"
+  Reporting__BatchSize: "200"
 
   Email__SmtpHost: "mailhog"
   Email__SmtpPort: "1025"
