@@ -173,9 +173,9 @@ public class RequestReturnE2ETests : IClassFixture<E2ETestServer>, IAsyncLifetim
         _server.PaymentService.RefundCalls[0].Amount.ToDecimal().Should().BeApproximately(29.99m, 0.01m);
         _server.PaymentService.RefundCalls[0].Reason.Should().Contain("Product defective");
 
-        _server.AccountingServer.RecordRefundCalls.Should().HaveCount(1);
-        _server.AccountingServer.RecordRefundCalls[0].RefundId.Should().Be(refundId);
-
+        // The cash leg belongs to Payment: its RefundIssuedEvent is what posts refund:{refundId}
+        // to the ledger. The saga recording it too would double-book.
+        _server.AccountingServer.RecordRefundCalls.Should().BeEmpty();
 
         _server.AccountingServer.ReverseRevenueCalls.Should().HaveCount(1);
         _server.AccountingServer.ReverseRevenueCalls[0].Amount.ToDecimal().Should().BeApproximately(29.99m, 0.01m);

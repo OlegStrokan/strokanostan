@@ -43,45 +43,6 @@ public class AccountingGatewayTests
             () => { });
     
     [Fact]
-    public async Task RecordRefundAsync_ShouldReturnTransactionId_WhenSucceeds()
-    {
-        var txId = "tx-999";
-        _client
-            .RecordRefundAsync(Arg.Any<RecordRefundRequest>(),
-                Arg.Any<Metadata>(), Arg.Any<DateTime?>(), Arg.Any<CancellationToken>())
-            .Returns(GrpcCall(new RecordRefundResponse { Success = true, TransactionId = txId }));
-
-        var result = await Build().RecordRefundAsync(
-            Guid.NewGuid(), "ref-1", 50m, "USD", "damaged goods type shit", CancellationToken.None);
-
-        Assert.Equal(txId, result);
-    }
-
-    [Fact]
-    public async Task RecordRefundAsync_ShouldThrowInvalidOperation_WhenNotSuccess()
-    {
-        _client
-            .RecordRefundAsync(Arg.Any<RecordRefundRequest>(),
-                Arg.Any<Metadata>(), Arg.Any<DateTime?>(), Arg.Any<CancellationToken>())
-            .Returns(GrpcCall(new RecordRefundResponse { Success = false, ErrorMessage = "accounting error" }));
-
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            Build().RecordRefundAsync(Guid.NewGuid(), "ref-1", 50m, "USD", "reason", CancellationToken.None));
-    }
-
-    [Fact]
-    public async Task RecordRefundAsync_ShouldThrowInvalidOperation_WhenRpcInvalidArgument()
-    {
-        _client
-            .RecordRefundAsync(Arg.Any<RecordRefundRequest>(),
-                Arg.Any<Metadata>(), Arg.Any<DateTime?>(), Arg.Any<CancellationToken>())
-            .Returns(GrpcFail<RecordRefundResponse>(StatusCode.InvalidArgument, "bad refund data"));
-
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            Build().RecordRefundAsync(Guid.NewGuid(), "ref-1", 50m, "USD", "reason", CancellationToken.None));
-    }
-    
-    [Fact]
     public async Task ReverseRevenueAsync_ShouldReturnReversalId_WhenSucceeds()
     {
         var reversalId = "rev-555";
@@ -100,15 +61,16 @@ public class AccountingGatewayTests
     }
 
     [Fact]
-    public async Task RecordRefundAsync_ShouldSendInternalApiKeyHeader()
+    public async Task ReverseRevenueAsync_ShouldSendInternalApiKeyHeader()
     {
         Metadata? sentHeaders = null;
         _client
-            .RecordRefundAsync(Arg.Any<RecordRefundRequest>(),
+            .ReverseRevenueAsync(Arg.Any<ReverseRevenueRequest>(),
                 Arg.Do<Metadata>(m => sentHeaders = m), Arg.Any<DateTime?>(), Arg.Any<CancellationToken>())
-            .Returns(GrpcCall(new RecordRefundResponse { Success = true, TransactionId = "tx-1" }));
+            .Returns(GrpcCall(new ReverseRevenueResponse { Success = true, ReversalId = "rev-1" }));
 
-        await Build().RecordRefundAsync(Guid.NewGuid(), "ref-1", 50m, "USD", "reason", CancellationToken.None);
+        await Build().ReverseRevenueAsync(
+            Guid.NewGuid(), Guid.NewGuid(), 50m, "USD", [], CancellationToken.None);
 
         Assert.Equal("test-shared-secret", sentHeaders?.GetValue("x-internal-api-key"));
     }

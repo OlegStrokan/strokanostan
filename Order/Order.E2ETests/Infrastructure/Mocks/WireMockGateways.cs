@@ -414,31 +414,6 @@ public class FakeGrpcAccountingGateway : IAccountingGateway
         _client = new AccountingService.AccountingServiceClient(channel);
     }
 
-    public async Task<string> RecordRefundAsync(
-        Guid orderId, 
-        string refundId, 
-        decimal amount,
-        string currency, 
-        string reason,
-        CancellationToken cancellationToken)
-    {
-        var response = await _client.RecordRefundAsync(
-            new RecordRefundRequest
-            {
-                OrderId = orderId.ToString(),
-                RefundId = refundId,
-                Amount = amount.ToDecimalValue(),
-                Currency = currency,
-                Reason = reason
-            },
-            cancellationToken: cancellationToken);
-
-        if (!response.Success)
-            throw new Exception($"RecordRefund failed: {response.ErrorMessage}");
-
-        return response.TransactionId;
-    }
-
     public async Task<string> ReverseRevenueAsync(
         Guid orderId,
         Guid returnRequestId,
