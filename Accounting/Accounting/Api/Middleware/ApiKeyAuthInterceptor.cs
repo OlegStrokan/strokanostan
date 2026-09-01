@@ -10,17 +10,27 @@ public sealed class ApiKeyAuthInterceptor(
     ILogger<ApiKeyAuthInterceptor> logger) : Interceptor
 {
     private const string ApiKeyHeader = "x-internal-api-key";
+    private const string AdminServiceSegment = "/accounting.adminops.AdminAccountingService/";
 
     public override async Task<TResponse> UnaryServerHandler<TRequest, TResponse>(
         TRequest request,
         ServerCallContext context,
         UnaryServerMethod<TRequest, TResponse> continuation)
     {
-        var expectedKey = configuration["InternalServices:AccountingApiKey"];
+        // Two callers, two credentials. Order holds the Accounting key for the money-posting API;
+        // OpsConsole holds its own key and reaches the read/adjustment surface only. One shared key
+        // would let the console call ReverseRevenue.
+        var isAdminSurface = context.Method.StartsWith(AdminServiceSegment, StringComparison.Ordinal);
+
+        var configKey = isAdminSurface
+            ? "InternalServices:OpsConsoleApiKey"
+            : "InternalServices:AccountingApiKey";
+
+        var expectedKey = configuration[configKey];
 
         if (string.IsNullOrEmpty(expectedKey))
         {
-            logger.LogError("InternalServices:AccountingApiKey is not configured; rejecting call.");
+            logger.LogError("{ConfigKey} is not configured; rejecting call to {Method}.", configKey, context.Method);
             throw new RpcException(new Status(StatusCode.PermissionDenied, "Caller not authorized."));
         }
 
@@ -30,7 +40,8 @@ public sealed class ApiKeyAuthInterceptor(
                 Encoding.UTF8.GetBytes(providedKey),
                 Encoding.UTF8.GetBytes(expectedKey)))
         {
-            logger.LogWarning("Rejected gRPC call with missing/invalid {Header}.", ApiKeyHeader);
+            logger.LogWarning(
+                "Rejected gRPC call to {Method} with missing/invalid {Header}.", context.Method, ApiKeyHeader);
             throw new RpcException(new Status(StatusCode.PermissionDenied, "Caller not authorized."));
         }
 

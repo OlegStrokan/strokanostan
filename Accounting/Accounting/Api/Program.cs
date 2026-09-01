@@ -38,6 +38,7 @@ using (var scope = app.Services.CreateScope())
 }
 
 app.MapGrpcService<AccountingGrpcService>();
+app.MapGrpcService<AdminAccountingGrpcService>();
 app.MapGrpcHealthChecksService();
 
 app.Run();
