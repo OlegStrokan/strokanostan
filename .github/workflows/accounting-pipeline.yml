@@ -51,7 +51,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        project: [Domain.Tests, Application.Tests]
+        project: [Domain.Tests, Application.Tests, Infrastructure.Tests, Api.Tests]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
