@@ -46,6 +46,8 @@ export default async function SagasPage({
     <main>
       <p>
         <Link href="/deadletters">Dead letters &rarr;</Link>
+        {" · "}
+        <Link href="/ledger">Ledger &rarr;</Link>
       </p>
       <h1>Sagas</h1>
 

@@ -202,3 +202,66 @@ export async function getDeadLetters(
   );
   return data.messages ?? [];
 }
+
+export type AccountBalance = {
+  account: string;
+  currency: string;
+  debits: number;
+  credits: number;
+  balance: number;
+};
+
+export type TrialBalance = {
+  reportingCurrency: string;
+  isBalanced: boolean;
+  reportingDebits: number;
+  reportingCredits: number;
+  transactionCurrencyBalances: AccountBalance[];
+  reportingCurrencyBalances: AccountBalance[];
+};
+
+export type LedgerHealth = {
+  isHealthy: boolean;
+  currenciesChecked: number;
+  findings: string[];
+};
+
+export type MoneyTrailEntry = {
+  account: string;
+  direction: string;
+  amount: number;
+  currency: string;
+};
+
+export type MoneyTrailTransaction = {
+  transactionId: string;
+  transactionRef: string;
+  refType: string;
+  refId: string;
+  currency: string;
+  occurredAt: string;
+  entries: MoneyTrailEntry[];
+};
+
+export async function getTrialBalance(currency?: string): Promise<TrialBalance> {
+  const params = new URLSearchParams();
+  if (currency) params.set("currency", currency);
+
+  const query = params.toString();
+  return opsConsoleFetch<TrialBalance>(
+    `/api/ledger/trial-balance${query ? `?${query}` : ""}`
+  );
+}
+
+export async function getLedgerHealth(): Promise<LedgerHealth> {
+  return opsConsoleFetch<LedgerHealth>("/api/ledger/health");
+}
+
+export async function getOrderMoneyTrail(
+  orderId: string
+): Promise<MoneyTrailTransaction[]> {
+  const data = await opsConsoleFetch<{ transactions?: MoneyTrailTransaction[] }>(
+    `/api/ledger/orders/${encodeURIComponent(orderId)}/money-trail`
+  );
+  return data.transactions ?? [];
+}
