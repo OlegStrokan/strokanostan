@@ -1,0 +1,100 @@
+syntax = "proto3";
+
+// Client-only copy of Accounting/Accounting/Protos/protos/admin_ops.proto.
+// Keep the two in sync by hand — nothing enforces it at build time.
+
+import "common.proto";
+
+option csharp_namespace = "Protos.AdminOps";
+
+package accounting.adminops;
+
+// Internal-only read surface for the OpsConsole ledger views. Read-only on purpose: an
+// append-only ledger loses its value the moment a console can mutate rows.
+service AdminAccountingService {
+  rpc GetTrialBalance (GetTrialBalanceRequest) returns (GetTrialBalanceResponse);
+  rpc GetOrderMoneyTrail (GetOrderMoneyTrailRequest) returns (GetOrderMoneyTrailResponse);
+  rpc GetLedgerHealth (GetLedgerHealthRequest) returns (GetLedgerHealthResponse);
+  // The only mutation. It appends a balanced transaction; it never edits or deletes one.
+  rpc PostAdjustingEntry (PostAdjustingEntryRequest) returns (PostAdjustingEntryResponse);
+}
+
+message GetLedgerHealthRequest {
+  int32 max_findings = 1;
+  int64 max_acceptable_lag = 2;
+}
+
+message GetLedgerHealthResponse {
+  bool is_healthy = 1;
+  repeated string findings = 2;
+  int32 currencies_checked = 3;
+}
+
+message AdjustingEntryLeg {
+  string account = 1;
+  string direction = 2;
+  common.DecimalValue amount = 3;
+}
+
+message PostAdjustingEntryRequest {
+  // Idempotency key. Re-posting the same id returns the original transaction.
+  string adjustment_id = 1;
+  string currency = 2;
+  repeated AdjustingEntryLeg legs = 3;
+  string reason = 4;
+  string posted_by = 5;
+  string order_id = 6;
+}
+
+message PostAdjustingEntryResponse {
+  bool success = 1;
+  string transaction_id = 2;
+  string error_message = 3;
+}
+
+message GetTrialBalanceRequest {
+  // Falls back to the configured reporting currency when empty.
+  string reporting_currency = 1;
+}
+
+message AccountBalance {
+  string account = 1;
+  string currency = 2;
+  common.DecimalValue debits = 3;
+  common.DecimalValue credits = 4;
+  common.DecimalValue balance = 5;
+}
+
+message GetTrialBalanceResponse {
+  string reporting_currency = 1;
+  repeated AccountBalance transaction_currency_balances = 2;
+  repeated AccountBalance reporting_currency_balances = 3;
+  common.DecimalValue reporting_debits = 4;
+  common.DecimalValue reporting_credits = 5;
+  bool is_balanced = 6;
+}
+
+message GetOrderMoneyTrailRequest {
+  string order_id = 1;
+}
+
+message MoneyTrailEntry {
+  string account = 1;
+  string direction = 2;
+  common.DecimalValue amount = 3;
+  string currency = 4;
+}
+
+message MoneyTrailTransaction {
+  string transaction_id = 1;
+  string transaction_ref = 2;
+  string ref_type = 3;
+  string ref_id = 4;
+  string currency = 5;
+  string occurred_at = 6;
+  repeated MoneyTrailEntry entries = 7;
+}
+
+message GetOrderMoneyTrailResponse {
+  repeated MoneyTrailTransaction transactions = 1;
+}
