@@ -46,6 +46,9 @@ public sealed class OpsConsoleWebApplicationFactory : WebApplicationFactory<Prog
     public AdminInventoryService.AdminInventoryServiceClient InventoryClient { get; } =
         Substitute.For<AdminInventoryService.AdminInventoryServiceClient>();
 
+    public AdminAccountingService.AdminAccountingServiceClient AccountingClient { get; } =
+        Substitute.For<AdminAccountingService.AdminAccountingServiceClient>();
+
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseEnvironment("Development");
@@ -67,6 +70,7 @@ public sealed class OpsConsoleWebApplicationFactory : WebApplicationFactory<Prog
             ReplaceSingleton(services, OrderClient);
             ReplaceSingleton(services, PaymentClient);
             ReplaceSingleton(services, InventoryClient);
+            ReplaceSingleton(services, AccountingClient);
         });
     }
 

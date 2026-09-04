@@ -35,6 +35,14 @@ builder.Services.AddGrpcClient<AdminInventoryService.AdminInventoryServiceClient
                              ?? "http://localhost:5074");
 }).AddInterceptor<InternalApiKeyInterceptor>().AddInterceptor<OperatorSubjectInterceptor>();
 
+// Accounting's interceptor routes on the service name: this admin surface accepts the OpsConsole
+// key, while Order's money-posting API still requires the separate Accounting key.
+builder.Services.AddGrpcClient<AdminAccountingService.AdminAccountingServiceClient>(options =>
+{
+    options.Address = new Uri(builder.Configuration["AccountingServiceUrl"]
+                             ?? "http://localhost:5085");
+}).AddInterceptor<InternalApiKeyInterceptor>().AddInterceptor<OperatorSubjectInterceptor>();
+
 // JWT auth. Originally (Phase 4) only mutating endpoints required it, with reads
 // staying behind ApiKeyMiddleware alone. Phase 7 extends the same JWT + role check to
 // read endpoints too ("OpsViewer" policy below) — the shared X-Admin-Api-Key can end
@@ -201,6 +209,8 @@ app.MapDeadLetterEndpoints();
 app.MapSagaMutationEndpoints();
 app.MapDeadLetterMutationEndpoints();
 app.MapSagaCorrelationEndpoints();
+app.MapLedgerEndpoints();
+app.MapLedgerMutationEndpoints();
 app.MapHealthEndpoints();
 
 app.Run();
