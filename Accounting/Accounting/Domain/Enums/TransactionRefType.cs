@@ -8,5 +8,6 @@ public enum TransactionRefType
     Refund = 3,                // money was paid back to the customer
     Reversal = 4,              // revenue was reversed (e.g. due to a return)
     ReversalCancellation = 5,  // a prior revenue reversal was undone
-    Chargeback = 6             // a card network dispute reversed a payment
+    Chargeback = 6,            // a card network dispute reversed a payment
+    Adjustment = 7             // an operator posted a manual correcting entry
 }
