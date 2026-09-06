@@ -17,6 +17,11 @@ public sealed class LedgerTransaction
     public string Currency { get; private set; } = null!;
     public DateTime OccurredAt { get; private set; }
     public DateTime CreatedAt { get; private set; }
+
+    // Set only for operator-posted adjustments
+    public string? Reason { get; private set; }
+    public string? PostedBy { get; private set; }
+
     public IReadOnlyCollection<LedgerEntry> Entries => _entries.AsReadOnly();
 
     private LedgerTransaction()
@@ -206,6 +211,53 @@ public sealed class LedgerTransaction
 
             tx.AddEntry(entry.Account, reversed, new Money(entry.Amount, entry.Currency));
         }
+
+        tx.EnsureBalanced();
+        return tx;
+    }
+
+    public static LedgerTransaction ForManualAdjustment(
+        string adjustmentId,
+        string currency,
+        IReadOnlyList<AdjustmentLeg> legs,
+        string reason,
+        string postedBy,
+        Guid? orderId,
+        DateTime occurredAt)
+    {
+        if (string.IsNullOrWhiteSpace(adjustmentId))
+            throw new ArgumentException("AdjustmentId is required.", nameof(adjustmentId));
+
+        if (string.IsNullOrWhiteSpace(currency))
+            throw new ArgumentException("Currency is required.", nameof(currency));
+
+        if (string.IsNullOrWhiteSpace(reason))
+            throw new ArgumentException("A reason is required for a manual adjustment.", nameof(reason));
+
+        if (string.IsNullOrWhiteSpace(postedBy))
+            throw new ArgumentException("PostedBy is required for a manual adjustment.", nameof(postedBy));
+
+        if (legs is null || legs.Count < 2)
+            throw new ArgumentException(
+                "A manual adjustment needs at least two legs to be balanced.", nameof(legs));
+
+        var normalizedCurrency = currency.Trim().ToUpperInvariant();
+
+        var tx = new LedgerTransaction(
+            transactionRef: $"adjustment:{adjustmentId.Trim()}",
+            refType: TransactionRefType.Adjustment,
+            refId: adjustmentId.Trim(),
+            currency: normalizedCurrency,
+            orderId: orderId,
+            paymentId: null,
+            occurredAt: occurredAt)
+        {
+            Reason = reason.Trim(),
+            PostedBy = postedBy.Trim(),
+        };
+
+        foreach (var leg in legs)
+            tx.AddEntry(leg.Account, leg.Direction, new Money(leg.Amount, normalizedCurrency));
 
         tx.EnsureBalanced();
         return tx;
